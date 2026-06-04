@@ -1,0 +1,262 @@
+"""GitHub Discussion 集成测试"""
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import pytest
+from pytest_httpserver import HTTPServer
+from issue2md.core.github import fetch
+from issue2md.models.resource import ResourceRef, ResourceType
+from issue2md.models.discussion import DiscussionData, Comment, Label
+from issue2md.errors import GithubAPIError
+
+
+def test_fetch_discussion_success(httpserver: HTTPServer):
+    """测试获取 Discussion 成功"""
+    # Mock GraphQL 响应
+    graphql_response = {
+        "data": {
+            "repository": {
+                "discussion": {
+                    "title": "Test Discussion",
+                    "body": "This is a test discussion body",
+                    "author": {
+                        "login": "octocat"
+                    },
+                    "createdAt": "2023-01-02T03:04:05Z",
+                    "updatedAt": "2023-06-01T07:08:09Z",
+                    "category": {
+                        "name": "General"
+                    },
+                    "labels": {
+                        "nodes": [
+                            {"name": "help wanted", "color": "0075ca"}
+                        ]
+                    },
+                    "comments": {
+                        "nodes": [
+                            {
+                                "author": {
+                                    "login": "user1"
+                                },
+                                "body": "Comment 1",
+                                "createdAt": "2023-01-02T04:00:00Z"
+                            },
+                            {
+                                "author": {
+                                    "login": "user2"
+                                },
+                                "body": "Comment 2",
+                                "createdAt": "2023-01-02T05:00:00Z"
+                            }
+                        ],
+                        "pageInfo": {
+                            "hasNextPage": False,
+                            "endCursor": None
+                        }
+                    },
+                    "answerChosen": false
+                }
+            }
+        }
+    }
+
+    # 设置 GraphQL 端点
+    httpserver.expect_request("/graphql", method="POST").respond_with_json(graphql_response)
+
+    # 执行测试
+    ref = ResourceRef("octocat", "Hello-World", ResourceType.DISCUSSION, 1)
+    data = fetch(ref, token=None)
+
+    # 验证结果
+    assert isinstance(data, DiscussionData)
+    assert data.title == "Test Discussion"
+    assert data.body == "This is a test discussion body"
+    assert data.author == "octocat"
+    assert data.category == "General"
+    assert data.answer_chosen is False
+    assert data.comments_count == 2
+    assert len(data.labels) == 1
+    assert data.labels[0].name == "help wanted"
+    assert len(data.comments) == 2
+    assert data.comments[0].author == "user1"
+    assert data.comments[0].body == "Comment 1"
+    assert data.comments[1].author == "user2"
+    assert data.comments[1].body == "Comment 2"
+
+
+def test_fetch_discussion_with_category(httpserver: HTTPServer):
+    """测试 Discussion category 字段"""
+    # Mock GraphQL 响应
+    graphql_response = {
+        "data": {
+            "repository": {
+                "discussion": {
+                    "title": "Feature Request",
+                    "body": "I would like to suggest a new feature",
+                    "author": {
+                        "login": "featureuser"
+                    },
+                    "createdAt": "2023-01-02T03:04:05Z",
+                    "updatedAt": "2023-06-01T07:08:09Z",
+                    "category": {
+                        "name": "Ideas"
+                    },
+                    "labels": {
+                        "nodes": []
+                    },
+                    "comments": {
+                        "nodes": [],
+                        "pageInfo": {
+                            "hasNextPage": False,
+                            "endCursor": None
+                        }
+                    },
+                    "answerChosen": false
+                }
+            }
+        }
+    }
+
+    # 设置 GraphQL 端点
+    httpserver.expect_request("/graphql", method="POST").respond_with_json(graphql_response)
+
+    # 执行测试
+    ref = ResourceRef("featureuser", "repo", ResourceType.DISCUSSION, 100)
+    data = fetch(ref, token=None)
+
+    # 验证 category 字段
+    assert data.category == "Ideas"
+
+
+def test_fetch_discussion_recursive_paging(httpserver: HTTPServer):
+    """测试 Discussion 递归翻页"""
+    # 第一页响应
+    first_page_response = {
+        "data": {
+            "repository": {
+                "discussion": {
+                    "title": "Long Discussion",
+                    "body": "A discussion with many comments",
+                    "author": {
+                        "login": "testuser"
+                    },
+                    "createdAt": "2023-01-02T03:04:05Z",
+                    "updatedAt": "2023-06-01T07:08:09Z",
+                    "category": {
+                        "name": "Q&A"
+                    },
+                    "labels": {
+                        "nodes": []
+                    },
+                    "comments": {
+                        "nodes": [
+                            {
+                                "author": {"login": "user1"},
+                                "body": "Comment 1",
+                                "createdAt": "2023-01-02T04:00:00Z"
+                            },
+                            {
+                                "author": {"login": "user2"},
+                                "body": "Comment 2",
+                                "createdAt": "2023-01-02T05:00:00Z"
+                            }
+                        ],
+                        "pageInfo": {
+                            "hasNextPage": True,
+                            "endCursor": "cursor1"
+                        }
+                    },
+                    "answerChosen": false
+                }
+            }
+        }
+    }
+
+    # 第二页响应
+    second_page_response = {
+        "data": {
+            "repository": {
+                "discussion": {
+                    "title": "Long Discussion",
+                    "body": "A discussion with many comments",
+                    "author": {
+                        "login": "testuser"
+                    },
+                    "createdAt": "2023-01-02T03:04:05Z",
+                    "updatedAt": "2023-06-01T07:08:09Z",
+                    "category": {
+                        "name": "Q&A"
+                    },
+                    "labels": {
+                        "nodes": []
+                    },
+                    "comments": {
+                        "nodes": [
+                            {
+                                "author": {"login": "user3"},
+                                "body": "Comment 3",
+                                "createdAt": "2023-01-02T06:00:00Z"
+                            },
+                            {
+                                "author": {"login": "user4"},
+                                "body": "Comment 4",
+                                "createdAt": "2023-01-02T07:00:00Z"
+                            }
+                        ],
+                        "pageInfo": {
+                            "hasNextPage": False,
+                            "endCursor": None
+                        }
+                    },
+                    "answerChosen": false
+                }
+            }
+        }
+    }
+
+    # 设置 GraphQL 端点（两次请求）
+    httpserver.expect_request("/graphql", method="POST").respond_with_json(first_page_response)
+    httpserver.expect_request("/graphql", method="POST").respond_with_json(second_page_response)
+
+    # 执行测试
+    ref = ResourceRef("testuser", "repo", ResourceType.DISCUSSION, 50)
+    data = fetch(ref, token=None)
+
+    # 验证所有评论都被获取
+    assert data.comments_count == 4
+    assert len(data.comments) == 4
+    # 评论应该按时间排序
+    assert data.comments[0].author == "user1"
+    assert data.comments[1].author == "user2"
+    assert data.comments[2].author == "user3"
+    assert data.comments[3].author == "user4"
+
+
+def test_fetch_discussion_not_found(httpserver: HTTPServer):
+    """测试 Discussion 不存在时的错误处理"""
+    # Mock GraphQL 错误响应
+    error_response = {
+        "data": {
+            "repository": {
+                "discussion": None
+            }
+        },
+        "errors": [
+            {
+                "message": "Could not resolve to a Discussion with the number '999'.",
+                "type": "NOT_FOUND"
+            }
+        ]
+    }
+
+    # 设置 GraphQL 端点
+    httpserver.expect_request("/graphql", method="POST").respond_with_json(error_response, status=200)
+
+    # 执行测试
+    ref = ResourceRef("nonexistent", "repo", ResourceType.DISCUSSION, 999)
+
+    with pytest.raises(GithubAPIError) as exc_info:
+        fetch(ref, token=None)
+
+    assert "not found" in str(exc_info.value).lower() or "enabled" in str(exc_info.value).lower()
