@@ -1,11 +1,12 @@
 """pytest 配置和共享 fixtures"""
 
-import pytest
 from datetime import datetime, timezone
 
-from issue2md.models.resource import ResourceRef, ResourceType
-from issue2md.models.issue import IssueData, Label, Comment
+import pytest
+
 from issue2md.models.discussion import DiscussionData
+from issue2md.models.issue import Comment, IssueData, Label
+from issue2md.models.resource import ResourceRef, ResourceType
 
 
 @pytest.fixture

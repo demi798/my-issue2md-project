@@ -1,15 +1,58 @@
 """CLI 主入口"""
 
+from __future__ import annotations
+
 import argparse
+import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Any
+from typing import Any
 
-from ..core import parse_url, output_path, fetch, render, validate_token
-from ..errors import Issue2mdError, URLParseError, AuthError, FileIOError
+from ..core import fetch, output_path, parse_url, render
+from ..errors import FileIOError, Issue2mdError
+from ..errors.messages import (
+    ENV_FILE_READ_SKIPPED,
+    FILE_NOT_FOUND,
+    FILE_READ_FAILED,
+    FILE_WRITE_FAILED,
+    PERMISSION_DENIED,
+)
+
+# 非 Issue2mdError 的已知 CLI 运行时错误
+_CLI_RUNTIME_ERRORS: tuple[type[BaseException], ...] = (
+    AttributeError,
+    KeyError,
+    LookupError,
+    RecursionError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
-def parse_args(args: List[str] | None = None) -> argparse.Namespace:
+def _handle_unexpected_error(error: BaseException, *, verbose: bool, label: str = "FATAL") -> int:
+    """处理未预期的 CLI 异常：记录错误，verbose 模式下重新抛出。"""
+    print(f"[{label}] Unexpected error: {error}", file=sys.stderr)
+    if verbose:
+        raise error
+    return 1
+
+
+def _handle_unexpected_url_error(
+    url: str,
+    error: BaseException,
+    *,
+    verbose: bool,
+    errors: list[dict[str, Any]],
+) -> None:
+    """记录单个 URL 的未预期错误；verbose 模式下重新抛出。"""
+    errors.append({"url": url, "exit_code": 1})
+    print(f"[ERROR] Unexpected error: {error}", file=sys.stderr)
+    if verbose:
+        raise error
+
+
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     """解析命令行参数。
 
     Args:
@@ -102,7 +145,7 @@ def parse_args(args: List[str] | None = None) -> argparse.Namespace:
     return namespace
 
 
-def main(args: List[str] | None = None) -> int:
+def main(args: list[str] | None = None) -> int:
     """CLI 主入口，返回语义化退出码。
 
     Args:
@@ -111,6 +154,7 @@ def main(args: List[str] | None = None) -> int:
     Returns:
         退出码：0=成功，1=参数错误，2=网络/API错误，3=文件IO错误，4=鉴权错误
     """
+    namespace: argparse.Namespace | None = None
     try:
         namespace = parse_args(args)
 
@@ -134,25 +178,65 @@ def main(args: List[str] | None = None) -> int:
     except Issue2mdError as e:
         print(e, file=sys.stderr)
         return e.exit_code
+    except KeyboardInterrupt:
+        print("\n[INFO] Interrupted by user", file=sys.stderr)
+        return 130
+    except _CLI_RUNTIME_ERRORS as e:
+        verbose = namespace is not None and namespace.verbose
+        return _handle_unexpected_error(e, verbose=verbose)
     except Exception as e:
-        print(f"[FATAL] Unexpected error: {e}", file=sys.stderr)
-        if namespace.verbose if "namespace" in locals() else False:
-            raise
-        return 1
+        # 兜底：捕获 MemoryError 等未列出的系统级异常
+        verbose = namespace is not None and namespace.verbose
+        return _handle_unexpected_error(e, verbose=verbose)
 
 
-def get_github_token() -> Optional[str]:
+def get_github_token() -> str | None:
     """获取 GitHub Token。
 
+    优先级：环境变量 GITHUB_TOKEN > .env 文件。
+
     Returns:
-        Token 字符串或 None
+        Token 字符串；未配置时返回 None
     """
-    import os
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and token.strip():
+        return token.strip()
 
-    return os.environ.get("GITHUB_TOKEN")
+    # 从当前工作目录向上查找 .env 文件
+    for directory in [Path.cwd(), *Path.cwd().parents]:
+        env_path = directory / ".env"
+        if not env_path.is_file():
+            continue
+        try:
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                if "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                if key.strip() != "GITHUB_TOKEN":
+                    continue
+                value = value.strip()
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
+                    value = value[1:-1]
+                if value:
+                    return value
+        except OSError as err:
+            print(
+                f"[WARN] {ENV_FILE_READ_SKIPPED.format(env_path, err)}",
+                file=sys.stderr,
+            )
+            continue
+
+    return None
 
 
-def load_urls(urls: List[str], from_file: Optional[Path]) -> List[str]:
+def load_urls(urls: list[str], from_file: Path | None) -> list[str]:
     """加载 URL 列表。
 
     Args:
@@ -171,7 +255,7 @@ def load_urls(urls: List[str], from_file: Optional[Path]) -> List[str]:
     return []
 
 
-def load_url_list(file_path: Path) -> List[str]:
+def load_url_list(file_path: Path) -> list[str]:
     """从文件加载 URL 列表。
 
     Args:
@@ -203,15 +287,15 @@ def load_url_list(file_path: Path) -> List[str]:
 
         return url_list
 
-    except FileNotFoundError:
-        raise FileIOError(f"File not found: {file_path}")
-    except PermissionError:
-        raise FileIOError(f"Permission denied: {file_path}")
-    except Exception as e:
-        raise FileIOError(f"Failed to read file {file_path}: {str(e)}")
+    except FileNotFoundError as err:
+        raise FileIOError(FILE_NOT_FOUND.format(file_path)) from err
+    except PermissionError as err:
+        raise FileIOError(PERMISSION_DENIED.format(file_path)) from err
+    except OSError as err:
+        raise FileIOError(FILE_READ_FAILED.format(file_path, str(err))) from err
 
 
-def dedup_urls(urls: List[str]) -> List[str]:
+def dedup_urls(urls: list[str]) -> list[str]:
     """URL 去重，保持首次出现的顺序。
 
     Args:
@@ -231,7 +315,7 @@ def dedup_urls(urls: List[str]) -> List[str]:
     return deduped
 
 
-def process_urls(url_list: List[str], args: argparse.Namespace, token: Optional[str]) -> int:
+def process_urls(url_list: list[str], args: argparse.Namespace, token: str | None) -> int:
     """处理所有 URL。
 
     Args:
@@ -242,7 +326,6 @@ def process_urls(url_list: List[str], args: argparse.Namespace, token: Optional[
     Returns:
         退出码
     """
-    from ..models.resource import ResourceRef
 
     results = []
     errors: list[dict[str, Any]] = []
@@ -273,10 +356,15 @@ def process_urls(url_list: List[str], args: argparse.Namespace, token: Optional[
             if not args.continue_on_error:
                 return e.exit_code
 
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except _CLI_RUNTIME_ERRORS as e:
+            _handle_unexpected_url_error(url, e, verbose=args.verbose, errors=errors)
+            if not args.continue_on_error:
+                return 1
         except Exception as e:
-            errors.append({"url": url, "exit_code": 1})
-            print(f"[ERROR] Unexpected error: {e}", file=sys.stderr)
-
+            # 兜底：捕获 MemoryError 等未列出的系统级异常
+            _handle_unexpected_url_error(url, e, verbose=args.verbose, errors=errors)
             if not args.continue_on_error:
                 return 1
 
@@ -318,10 +406,10 @@ def write_file(file_path: Path, content: str) -> None:
 
         print(f"[INFO] Written to {file_path}", file=sys.stderr)
 
-    except PermissionError:
-        raise FileIOError(f"Permission denied: {file_path}")
-    except OSError as e:
-        raise FileIOError(f"Failed to write file {file_path}: {str(e)}")
+    except PermissionError as err:
+        raise FileIOError(PERMISSION_DENIED.format(file_path)) from err
+    except OSError as err:
+        raise FileIOError(FILE_WRITE_FAILED.format(file_path, str(err))) from err
 
 
 if __name__ == "__main__":

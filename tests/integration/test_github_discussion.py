@@ -1,21 +1,17 @@
 """GitHub Discussion 集成测试"""
 
-import json
-from datetime import datetime, timezone
-from pathlib import Path
-import pytest
 
-# HTTPServer 已弃用，改用 requests_mock
+import pytest
 from requests_mock import Mocker as requests_mock
+
 from issue2md.core.github import fetch
-from issue2md.models.resource import ResourceRef, ResourceType
-from issue2md.models.discussion import DiscussionData, Comment, Label
 from issue2md.errors import GithubAPIError
+from issue2md.models.discussion import DiscussionData
+from issue2md.models.resource import ResourceRef, ResourceType
 
 
 def test_fetch_discussion_success(requests_mock: requests_mock):
     """测试获取 Discussion 成功"""
-    # Mock GraphQL 响应
     graphql_response = {
         "data": {
             "repository": {
@@ -48,16 +44,11 @@ def test_fetch_discussion_success(requests_mock: requests_mock):
         }
     }
 
-    # 设置 GraphQL 端点
-    requests_mock.post("https://api.github.com/graphql", json=graphql_response).respond_with_json(
-        graphql_response
-    )
+    requests_mock.post("https://api.github.com/graphql", json=graphql_response)
 
-    # 执行测试
     ref = ResourceRef("octocat", "Hello-World", ResourceType.DISCUSSION, 1)
     data = fetch(ref, token=None)
 
-    # 验证结果
     assert isinstance(data, DiscussionData)
     assert data.title == "Test Discussion"
     assert data.body == "This is a test discussion body"
@@ -76,7 +67,6 @@ def test_fetch_discussion_success(requests_mock: requests_mock):
 
 def test_fetch_discussion_with_category(requests_mock: requests_mock):
     """测试 Discussion category 字段"""
-    # Mock GraphQL 响应
     graphql_response = {
         "data": {
             "repository": {
@@ -98,22 +88,16 @@ def test_fetch_discussion_with_category(requests_mock: requests_mock):
         }
     }
 
-    # 设置 GraphQL 端点
-    requests_mock.post("https://api.github.com/graphql", json=graphql_response).respond_with_json(
-        graphql_response
-    )
+    requests_mock.post("https://api.github.com/graphql", json=graphql_response)
 
-    # 执行测试
     ref = ResourceRef("featureuser", "repo", ResourceType.DISCUSSION, 100)
     data = fetch(ref, token=None)
 
-    # 验证 category 字段
     assert data.category == "Ideas"
 
 
 def test_fetch_discussion_recursive_paging(requests_mock: requests_mock):
     """测试 Discussion 递归翻页"""
-    # 第一页响应
     first_page_response = {
         "data": {
             "repository": {
@@ -146,7 +130,6 @@ def test_fetch_discussion_recursive_paging(requests_mock: requests_mock):
         }
     }
 
-    # 第二页响应
     second_page_response = {
         "data": {
             "repository": {
@@ -179,22 +162,16 @@ def test_fetch_discussion_recursive_paging(requests_mock: requests_mock):
         }
     }
 
-    # 设置 GraphQL 端点（两次请求）
-    requests_mock.post("https://api.github.com/graphql", json=graphql_response).respond_with_json(
-        first_page_response
-    )
-    requests_mock.post("https://api.github.com/graphql", json=graphql_response).respond_with_json(
-        second_page_response
+    requests_mock.post(
+        "https://api.github.com/graphql",
+        [{"json": first_page_response}, {"json": second_page_response}],
     )
 
-    # 执行测试
     ref = ResourceRef("testuser", "repo", ResourceType.DISCUSSION, 50)
     data = fetch(ref, token=None)
 
-    # 验证所有评论都被获取
     assert data.comments_count == 4
     assert len(data.comments) == 4
-    # 评论应该按时间排序
     assert data.comments[0].author == "user1"
     assert data.comments[1].author == "user2"
     assert data.comments[2].author == "user3"
@@ -203,7 +180,6 @@ def test_fetch_discussion_recursive_paging(requests_mock: requests_mock):
 
 def test_fetch_discussion_not_found(requests_mock: requests_mock):
     """测试 Discussion 不存在时的错误处理"""
-    # Mock GraphQL 错误响应
     error_response = {
         "data": {"repository": {"discussion": None}},
         "errors": [
@@ -214,12 +190,8 @@ def test_fetch_discussion_not_found(requests_mock: requests_mock):
         ],
     }
 
-    # 设置 GraphQL 端点
-    requests_mock.post("https://api.github.com/graphql", json=graphql_response).respond_with_json(
-        error_response, status=200
-    )
+    requests_mock.post("https://api.github.com/graphql", json=error_response)
 
-    # 执行测试
     ref = ResourceRef("nonexistent", "repo", ResourceType.DISCUSSION, 999)
 
     with pytest.raises(GithubAPIError) as exc_info:

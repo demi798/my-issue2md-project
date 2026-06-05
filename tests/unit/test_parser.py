@@ -1,11 +1,12 @@
 """URL 解析器测试 - 表格驱动测试"""
 
-import pytest
 from pathlib import Path
 
-from issue2md.core.parser import parse_url, output_path
-from issue2md.models.resource import ResourceRef, ResourceType
+import pytest
+
+from issue2md.core.parser import output_path, parse_url
 from issue2md.errors import URLParseError
+from issue2md.models.resource import ResourceRef, ResourceType
 
 
 class TestParseURLValid:
@@ -96,7 +97,7 @@ class TestParseURLValid:
         expected_repo: str,
         expected_type: ResourceType,
         expected_number: int,
-    ):
+    ) -> None:
         """测试合法 URL 解析"""
         result = parse_url(url)
 
@@ -147,7 +148,7 @@ class TestParseURLInvalid:
             ("https://github.com/owner/repo/issues/1?foo=bar", "不支持查询参数"),
         ],
     )
-    def test_parse_url_invalid(self, url: str, reason: str):
+    def test_parse_url_invalid(self, url: str, reason: str) -> None:
         """测试非法 URL 应抛出 URLParseError"""
         with pytest.raises(URLParseError) as exc_info:
             parse_url(url)
@@ -162,14 +163,14 @@ class TestParseURLInvalid:
 class TestParseURLEdgeCases:
     """测试边缘情况"""
 
-    def test_parse_url_same_urls_equal(self):
+    def test_parse_url_same_urls_equal(self) -> None:
         """测试相同 URL 解析结果相等"""
         url = "https://github.com/owner/repo/issues/1"
         result1 = parse_url(url)
         result2 = parse_url(url)
         assert result1 == result2
 
-    def test_parse_url_url_property(self):
+    def test_parse_url_url_property(self) -> None:
         """测试 ResourceRef.url 属性"""
         url = "https://github.com/owner/repo/issues/1"
         result = parse_url(url)
@@ -214,12 +215,12 @@ class TestOutputPath:
             ),
         ],
     )
-    def test_output_path(self, ref: ResourceRef, root: Path, expected: Path):
+    def test_output_path(self, ref: ResourceRef, root: Path, expected: Path) -> None:
         """测试路径拼接"""
         result = output_path(ref, root)
         assert result == expected, f"预期 {expected}, 实际 {result}"
 
-    def test_output_path_is_str_only(self):
+    def test_output_path_is_str_only(self) -> None:
         """验证 output_path 仅做字符串拼接，不创建目录"""
         # 这是一个设计约束测试
         # 如果函数尝试创建目录，会因为目录不存在而失败（如果 root 是不存在的路径）

@@ -1,10 +1,12 @@
 """Discussion 数据模型"""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .resource import ResourceRef
 from .issue import Comment, Label
+from .resource import ResourceRef
 
 
 @dataclass(frozen=True)

@@ -1,10 +1,9 @@
 """简单的 httpserver 测试"""
 
-import pytest
 from pytest_httpserver import HTTPServer
 
 
-def test_httpserver_basic(httpserver: HTTPServer):
+def test_httpserver_basic(httpserver: HTTPServer) -> None:
     """测试 httpserver 是否正常工作"""
     # 定义 mock 响应
     httpserver.expect_request("/test").respond_with_json({"status": "ok"})
@@ -18,7 +17,7 @@ def test_httpserver_basic(httpserver: HTTPServer):
     assert response.json() == {"status": "ok"}
 
 
-def test_httpserver_mock_path(httpserver: HTTPServer):
+def test_httpserver_mock_path(httpserver: HTTPServer) -> None:
     """测试 httpserver 路径匹配"""
     httpserver.expect_request("/api/users/1").respond_with_json({"id": 1, "name": "Alice"})
 

@@ -1,7 +1,9 @@
 """Discussion 模型的单元测试"""
 
-import pytest
 from datetime import datetime
+
+import pytest
+
 from issue2md.models.discussion import DiscussionData
 from issue2md.models.resource import ResourceRef, ResourceType
 
@@ -9,13 +11,13 @@ from issue2md.models.resource import ResourceRef, ResourceType
 class TestDiscussionData:
     """测试 DiscussionData dataclass"""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         """测试前的设置"""
         self.ref = ResourceRef("vercel", "next.js", ResourceType.DISCUSSION, 100)
         self.created_at = datetime(2026, 1, 1, 12, 0, 0)
         self.updated_at = datetime(2026, 1, 2, 12, 0, 0)
 
-    def test_basic_creation(self):
+    def test_basic_creation(self) -> None:
         """测试基本字段必填"""
         discussion = DiscussionData(
             ref=self.ref,
@@ -37,7 +39,7 @@ class TestDiscussionData:
         assert discussion.comments == []
         assert discussion.answer_chosen is False
 
-    def test_with_labels(self):
+    def test_with_labels(self) -> None:
         """测试包含标签"""
         from issue2md.models.issue import Label
 
@@ -55,7 +57,7 @@ class TestDiscussionData:
         assert discussion.labels == [label]
         assert discussion.labels[0].name == "help"
 
-    def test_with_comments(self):
+    def test_with_comments(self) -> None:
         """测试包含评论"""
         from issue2md.models.issue import Comment
 
@@ -73,7 +75,7 @@ class TestDiscussionData:
         assert discussion.comments == [comment]
         assert discussion.comments[0].author == "jane"
 
-    def test_answer_chosen_true(self):
+    def test_answer_chosen_true(self) -> None:
         """测试 answer_chosen 为 True"""
         discussion = DiscussionData(
             ref=self.ref,
@@ -87,7 +89,7 @@ class TestDiscussionData:
         )
         assert discussion.answer_chosen is True
 
-    def test_comments_count_property(self):
+    def test_comments_count_property(self) -> None:
         """测试 comments_count 属性"""
         from issue2md.models.issue import Comment
 
@@ -105,7 +107,7 @@ class TestDiscussionData:
         )
         assert discussion.comments_count == 2
 
-    def test_type_property(self):
+    def test_type_property(self) -> None:
         """测试 type 属性返回 discussion"""
         discussion = DiscussionData(
             ref=self.ref,
@@ -118,7 +120,7 @@ class TestDiscussionData:
         )
         assert discussion.type == "discussion"
 
-    def test_frozen(self):
+    def test_frozen(self) -> None:
         """测试不可变性"""
         discussion = DiscussionData(
             ref=self.ref,

@@ -1,11 +1,11 @@
 """GitHub API 单元测试 - Token 验证和响应处理"""
 
-import pytest
 from unittest.mock import Mock, patch
-from datetime import datetime, timezone
 
-from issue2md.core.github import validate_token, _handle_response
-from issue2md.errors import AuthError, RateLimitError, GithubAPIError
+import pytest
+
+from issue2md.core.github import _handle_response, validate_token
+from issue2md.errors import AuthError, GithubAPIError, RateLimitError
 
 
 class TestValidateToken:
@@ -20,7 +20,7 @@ class TestValidateToken:
             "\n",  # 仅换行符
         ],
     )
-    def test_validate_token_empty_string(self, token: str):
+    def test_validate_token_empty_string(self, token: str) -> None:
         """空字符串应抛出 AuthError"""
         with pytest.raises(AuthError) as exc_info:
             validate_token(token)
@@ -37,7 +37,7 @@ class TestValidateToken:
             "abc123",  # 6 字符
         ],
     )
-    def test_validate_token_too_short(self, token: str):
+    def test_validate_token_too_short(self, token: str) -> None:
         """长度 < 20 应抛出 AuthError"""
         with pytest.raises(AuthError) as exc_info:
             validate_token(token)
@@ -54,7 +54,7 @@ class TestValidateToken:
             "valid_token_with_length_1234567890",  # 合法字符串
         ],
     )
-    def test_validate_token_valid(self, token: str):
+    def test_validate_token_valid(self, token: str) -> None:
         """长度 >= 20 的合法 Token 不应抛出异常"""
         # 不应抛出任何异常
         validate_token(token)
@@ -63,7 +63,7 @@ class TestValidateToken:
 class TestHandleResponse:
     """测试 HTTP 响应处理"""
 
-    def test_handle_response_401(self):
+    def test_handle_response_401(self) -> None:
         """401 → AuthError"""
         response = Mock()
         response.status_code = 401
@@ -74,7 +74,7 @@ class TestHandleResponse:
 
         assert "Invalid token" in str(exc_info.value) or "鉴权" in str(exc_info.value)
 
-    def test_handle_response_403_non_rate_limit(self):
+    def test_handle_response_403_non_rate_limit(self) -> None:
         """403（非限流）→ AuthError"""
         response = Mock()
         response.status_code = 403
@@ -85,7 +85,7 @@ class TestHandleResponse:
 
         assert "权限" in str(exc_info.value) or "Insufficient" in str(exc_info.value)
 
-    def test_handle_response_404(self):
+    def test_handle_response_404(self) -> None:
         """404 → GithubAPIError"""
         response = Mock()
         response.status_code = 404
@@ -97,7 +97,7 @@ class TestHandleResponse:
         assert "not found" in str(exc_info.value).lower()
 
     @pytest.mark.parametrize("status_code", [500, 502, 503, 504])
-    def test_handle_response_5xx(self, status_code: int):
+    def test_handle_response_5xx(self, status_code: int) -> None:
         """5xx → GithubAPIError"""
         response = Mock()
         response.status_code = status_code
@@ -108,7 +108,7 @@ class TestHandleResponse:
 
         assert str(status_code) in str(exc_info.value)
 
-    def test_handle_response_rate_limit_detected(self):
+    def test_handle_response_rate_limit_detected(self) -> None:
         """X-RateLimit-Remaining=0 → 应检测到限流"""
         current_time = 1700000000  # 2023-11-14 22:13:20 UTC
         reset_time = current_time + 300  # 5 分钟后
@@ -120,11 +120,14 @@ class TestHandleResponse:
             "X-RateLimit-Reset": str(reset_time),
         }
 
-        with patch("time.time", return_value=current_time):
+        with (
+            patch("issue2md.core.github.time.time", return_value=current_time),
+            patch("issue2md.core.github.time.sleep"),
+        ):
             # 函数不应抛出异常，只是标记需要重试
             _handle_response(response, token=None)
 
-    def test_handle_response_rate_limit_wait_too_long(self):
+    def test_handle_response_rate_limit_wait_too_long(self) -> None:
         """reset - now > 600 秒 → RateLimitError"""
         current_time = 1700000000
         reset_time = current_time + 700  # 超过 600 秒
@@ -137,12 +140,12 @@ class TestHandleResponse:
         }
 
         with pytest.raises(RateLimitError) as exc_info:
-            with patch("time.time", return_value=current_time):
+            with patch("issue2md.core.github.time.time", return_value=current_time):
                 _handle_response(response, token=None)
 
         assert "700" in str(exc_info.value) or "too far" in str(exc_info.value)
 
-    def test_handle_response_rate_limit_exactly_600(self):
+    def test_handle_response_rate_limit_exactly_600(self) -> None:
         """reset - now = 600 秒 → 应允许等待"""
         current_time = 1700000000
         reset_time = current_time + 600
@@ -154,11 +157,14 @@ class TestHandleResponse:
             "X-RateLimit-Reset": str(reset_time),
         }
 
-        with patch("time.time", return_value=current_time):
+        with (
+            patch("issue2md.core.github.time.time", return_value=current_time),
+            patch("issue2md.core.github.time.sleep"),
+        ):
             # 不应抛出异常
             _handle_response(response, token=None)
 
-    def test_handle_response_success_no_rate_limit(self):
+    def test_handle_response_success_no_rate_limit(self) -> None:
         """正常响应且未限流 → 不应抛出异常"""
         response = Mock()
         response.status_code = 200
@@ -167,7 +173,7 @@ class TestHandleResponse:
         # 不应抛出异常
         _handle_response(response, token=None)
 
-    def test_handle_response_429_rate_limit(self):
+    def test_handle_response_429_rate_limit(self) -> None:
         """429 状态码应同样触发限流逻辑"""
         current_time = 1700000000
         reset_time = current_time + 60
@@ -179,11 +185,14 @@ class TestHandleResponse:
             "X-RateLimit-Reset": str(reset_time),
         }
 
-        with patch("time.time", return_value=current_time):
+        with (
+            patch("issue2md.core.github.time.time", return_value=current_time),
+            patch("issue2md.core.github.time.sleep"),
+        ):
             # 不应抛出异常
             _handle_response(response, token=None)
 
-    def test_handle_response_missing_remaining_header(self):
+    def test_handle_response_missing_remaining_header(self) -> None:
         """缺少 X-RateLimit-Remaining header → 默认不触发限流"""
         response = Mock()
         response.status_code = 200
@@ -192,7 +201,7 @@ class TestHandleResponse:
         # 不应抛出异常
         _handle_response(response, token=None)
 
-    def test_handle_response_invalid_remaining_header(self):
+    def test_handle_response_invalid_remaining_header(self) -> None:
         """X-RateLimit-Remaining 格式无效 → 不触发限流"""
         response = Mock()
         response.status_code = 200
@@ -201,7 +210,7 @@ class TestHandleResponse:
         # 不应抛出异常（使用默认值 1）
         _handle_response(response, token=None)
 
-    def test_handle_response_missing_reset_header(self):
+    def test_handle_response_missing_reset_header(self) -> None:
         """X-RateLimit-Remaining=0 但缺少 X-RateLimit-Reset → 应抛异常"""
         response = Mock()
         response.status_code = 200

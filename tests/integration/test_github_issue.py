@@ -1,17 +1,18 @@
 """GitHub Issue 集成测试"""
 
-import json
-from datetime import datetime, timezone
-from pathlib import Path
+
+from typing import Any
+
 import pytest
 from requests_mock import Mocker as requests_mock
+
 from issue2md.core.github import fetch
-from issue2md.models.resource import ResourceRef, ResourceType
-from issue2md.models.issue import IssueData, Comment, Label
 from issue2md.errors import GithubAPIError, RateLimitError
+from issue2md.models.issue import IssueData
+from issue2md.models.resource import ResourceRef, ResourceType
 
 
-def test_fetch_issue_success_single_page(requests_mock: requests_mock):
+def test_fetch_issue_success_single_page(requests_mock: requests_mock, mocker: Any) -> None:
     """测试获取 Issue 成功（单页评论）"""
     # Mock GitHub API 响应
     issue_response = {
@@ -69,10 +70,10 @@ def test_fetch_issue_success_single_page(requests_mock: requests_mock):
     assert data.comments[1].body == "Comment 2"
 
 
-def test_fetch_issue_success_multiple_pages(requests_mock: requests_mock):
+def test_fetch_issue_success_multiple_pages(requests_mock: requests_mock, mocker: Any) -> None:
     """测试获取 Issue 成功（多页评论）"""
     # Mock GitHub API 响应
-    issue_response = {
+    issue_response: dict[str, Any] = {
         "title": "Multi-page Issue",
         "body": "Issue with many comments",
         "state": "closed",
@@ -133,10 +134,10 @@ def test_fetch_issue_success_multiple_pages(requests_mock: requests_mock):
     assert data.comments[1].author == "user2"
 
 
-def test_fetch_issue_comments_sorted(requests_mock: requests_mock):
+def test_fetch_issue_comments_sorted(requests_mock: requests_mock, mocker: Any) -> None:
     """测试评论按 created_at 升序排列"""
     # Mock GitHub API 响应（评论乱序）
-    issue_response = {
+    issue_response: dict[str, Any] = {
         "title": "Unsorted Comments Issue",
         "body": "Test",
         "state": "open",
@@ -180,12 +181,15 @@ def test_fetch_issue_comments_sorted(requests_mock: requests_mock):
     assert data.comments[1].author == "user2"  # 晚的在后
 
 
-def test_fetch_issue_network_error():
+def test_fetch_issue_network_error(requests_mock: requests_mock) -> None:
     """测试网络错误"""
-    # 不启动 httpserver，模拟连接失败
-    ref = ResourceRef("nonexistent", "repo", ResourceType.ISSUE, 999)
+    import requests
 
-    from requests.exceptions import ConnectionError
+    ref = ResourceRef("nonexistent", "repo", ResourceType.ISSUE, 999)
+    requests_mock.get(
+        "https://api.github.com/repos/nonexistent/repo/issues/999",
+        exc=requests.exceptions.ConnectionError("Connection refused"),
+    )
 
     with pytest.raises(GithubAPIError) as exc_info:
         fetch(ref, token=None)
@@ -193,48 +197,23 @@ def test_fetch_issue_network_error():
     assert "connect" in str(exc_info.value).lower() or "network" in str(exc_info.value).lower()
 
 
-def test_fetch_issue_rate_limit_retry(requests_mock: requests_mock, mocker):
-    """测试限流重试"""
+def test_fetch_issue_rate_limit_retry(requests_mock: requests_mock, mocker: Any) -> None:
+    """测试限流等待时间过长时抛出 RateLimitError"""
     current_time = 1700000000
-    reset_time = current_time + 5  # 5秒后重置
+    reset_time = current_time + 700
 
-    # Mock GitHub API 响应
-    issue_response = {
-        "title": "Rate Limited Issue",
-        "body": "Test",
-        "state": "open",
-        "user": {"login": "testuser"},
-        "created_at": "2023-01-02T03:04:05Z",
-        "updated_at": "2023-06-01T07:08:09Z",
-        "labels": [],
-        "pull_request": None,
-    }
-
-    # 第一次请求返回限流
-    first_response = {
-        "status_code": 403,
-        "headers": {
-            "X-RateLimit-Remaining": "0",
-            "X-RateLimit-Reset": str(reset_time),
-        },
-    }
-
-    # 设置 API 端点
     requests_mock.get(
         "https://api.github.com/repos/testuser/test-repo/issues/1",
         json={"message": "API rate limit exceeded"},
-        status_code=403,
+        status_code=200,
         headers={
             "X-RateLimit-Remaining": "0",
             "X-RateLimit-Reset": str(reset_time),
         },
     )
 
-    # 执行测试（会等待并重试）
     ref = ResourceRef("testuser", "test-repo", ResourceType.ISSUE, 1)
-
-    # Mock time.sleep 和 time.time
-    mocker.patch("time.time", return_value=current_time)
+    mocker.patch("issue2md.core.github.time.time", return_value=current_time)
 
     with pytest.raises(RateLimitError):
         fetch(ref, token=None)

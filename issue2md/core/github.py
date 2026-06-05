@@ -1,24 +1,44 @@
 """GitHub API 交互模块 - 先生成空函数签名供测试编译通过"""
 
+from __future__ import annotations
+
 import re
 import sys
 import time
-from typing import TYPE_CHECKING, Any
 from datetime import datetime, timezone
-
-import requests
-from requests import Response
-from ..models.resource import ResourceRef, ResourceType
-from ..models.issue import IssueData, Label, Comment
-from ..models.discussion import DiscussionData
-from ..errors import AuthError, RateLimitError, GithubAPIError
+from typing import TYPE_CHECKING, Any
 
 import dateutil.parser
+import requests
+
+from ..constants import MAX_RETRY_WAIT_SECONDS
+from ..errors import AuthError, GithubAPIError, RateLimitError
+from ..errors.messages import (
+    DISCUSSION_NOT_FOUND,
+    DISCUSSION_NOT_FOUND_SIMPLE,
+    GITHUB_SERVER_ERROR,
+    GRAPHQL_ERROR,
+    INSUFFICIENT_PERMISSIONS,
+    INVALID_JSON_RESPONSE,
+    INVALID_RATE_LIMIT_REMAINING,
+    INVALID_RATE_LIMIT_RESET,
+    INVALID_TOKEN,
+    MISSING_RATE_LIMIT_RESET,
+    NETWORK_ERROR,
+    RATE_LIMIT_EXCEEDED,
+    RATE_LIMIT_RESET_TOO_FAR,
+    RESOURCE_NOT_FOUND,
+    TOKEN_EMPTY,
+    TOKEN_INVALID_CHARS,
+    TOKEN_TOO_SHORT,
+    UNEXPECTED_STATUS,
+)
+from ..models.discussion import DiscussionData
+from ..models.issue import Comment, IssueData, Label
+from ..models.resource import ResourceRef, ResourceType
 
 if TYPE_CHECKING:
-    from ..models.resource import ResourceRef, ResourceType
-    from ..models.issue import IssueData, Label, Comment
-    from ..models.discussion import DiscussionData
+    from requests import Response
 
 
 def validate_token(token: str) -> None:
@@ -32,17 +52,17 @@ def validate_token(token: str) -> None:
     """
     # 检查空字符串或空白字符
     if not token or not token.strip():
-        raise AuthError("Token 不能为空")
+        raise AuthError(TOKEN_EMPTY)
 
     # 检查长度（至少 20 字符）
     if len(token) < 20:
-        raise AuthError("Token 长度必须至少 20 个字符")
+        raise AuthError(TOKEN_TOO_SHORT)
 
     # 可选：验证 Token 格式（个人访问令牌以 ghp_ 开头，但不强制）
     # 这里只做基本验证，不强制要求 ghp_ 前缀
     token_pattern = re.compile(r"^[a-zA-Z0-9_\-]+$")
     if not token_pattern.match(token):
-        raise AuthError("Token 包含非法字符")
+        raise AuthError(TOKEN_INVALID_CHARS)
 
 
 def _handle_response(response: Response, token: str | None) -> None:
@@ -58,16 +78,33 @@ def _handle_response(response: Response, token: str | None) -> None:
         GithubAPIError: 其他 API 错误
     """
     # 检查限流
-    remaining = int(response.headers.get("X-RateLimit-Remaining", "1"))
+    remaining_raw = response.headers.get("X-RateLimit-Remaining", "1")
+    try:
+        remaining = int(remaining_raw)
+    except (TypeError, ValueError) as err:
+        # header 格式无效时视为未限流，并记录警告以便排查
+        print(
+            f"[WARN] {INVALID_RATE_LIMIT_REMAINING.format(remaining_raw)} ({err})",
+            file=sys.stderr,
+        )
+        remaining = 1
 
     if remaining == 0:
         # 限流处理
-        reset_ts = int(response.headers.get("X-RateLimit-Reset", "0"))
+        if "X-RateLimit-Reset" not in response.headers:
+            raise RateLimitError(MISSING_RATE_LIMIT_RESET)
+
+        try:
+            reset_ts = int(response.headers["X-RateLimit-Reset"])
+        except ValueError as err:
+            raise RateLimitError(
+                INVALID_RATE_LIMIT_RESET.format(response.headers["X-RateLimit-Reset"])
+            ) from err
         current_time = int(time.time())
         wait_seconds = reset_ts - current_time
 
-        if wait_seconds > 600:  # 超过 600 秒
-            raise RateLimitError(f"Rate limit reset too far in future: {wait_seconds}s")
+        if wait_seconds > MAX_RETRY_WAIT_SECONDS:
+            raise RateLimitError(RATE_LIMIT_RESET_TOO_FAR.format(wait_seconds))
 
         if wait_seconds > 0:
             print(f"[INFO] rate-limited, waiting {wait_seconds}s until reset...", file=sys.stderr)
@@ -80,25 +117,25 @@ def _handle_response(response: Response, token: str | None) -> None:
     status_code = response.status_code
 
     if status_code == 401:
-        raise AuthError("Invalid token") from None
+        raise AuthError(INVALID_TOKEN.format(status_code))
     elif status_code == 403:
         # 检查是否是限流导致的 403
         if (
             "X-RateLimit-Remaining" in response.headers
-            and int(response.headers["X-RateLimit-Remaining"]) == 0
+            and response.headers["X-RateLimit-Remaining"] == "0"
         ):
-            raise RateLimitError("Rate limit exceeded") from None
+            raise RateLimitError(RATE_LIMIT_EXCEEDED.format(status_code))
         else:
-            raise AuthError("Insufficient permissions") from None
+            raise AuthError(INSUFFICIENT_PERMISSIONS.format(status_code))
     elif status_code == 404:
-        raise GithubAPIError("Resource not found") from None
+        raise GithubAPIError(RESOURCE_NOT_FOUND.format(status_code))
     elif status_code >= 500:
-        raise GithubAPIError(f"GitHub server error: {status_code}") from None
+        raise GithubAPIError(GITHUB_SERVER_ERROR.format(status_code))
     elif not response.ok:
-        raise GithubAPIError(f"Unexpected status: {status_code}") from None
+        raise GithubAPIError(UNEXPECTED_STATUS.format(status_code))
 
 
-def fetch(ref: ResourceRef, token: str | None = None) -> "IssueData | DiscussionData":
+def fetch(ref: ResourceRef, token: str | None = None) -> IssueData | DiscussionData:
     """根据资源引用拉取完整数据（含全量评论，自动分页）。
 
     Args:
@@ -113,8 +150,6 @@ def fetch(ref: ResourceRef, token: str | None = None) -> "IssueData | Discussion
         RateLimitError: 触发限流且重试失败时抛出
         AuthError: Token 无效时抛出
     """
-    from urllib.parse import parse_qs
-
     base_url = "https://api.github.com"
 
     # 根据资源类型选择 API 端点
@@ -265,7 +300,7 @@ def _make_request(
         return response
 
     except requests.exceptions.RequestException as e:
-        raise GithubAPIError(f"Network error: {str(e)}") from e
+        raise GithubAPIError(NETWORK_ERROR.format(str(e))) from e
 
 
 def _fetch_all_pages(url: str, token: str | None) -> list[dict[str, Any]]:
@@ -278,7 +313,6 @@ def _fetch_all_pages(url: str, token: str | None) -> list[dict[str, Any]]:
     Returns:
         合并后的数据列表
     """
-    from urllib.parse import parse_qs, urlparse
 
     all_data: list[dict[str, Any]] = []
     page = 1
@@ -300,7 +334,7 @@ def _fetch_all_pages(url: str, token: str | None) -> list[dict[str, Any]]:
 
         # 检查是否还有更多数据
         link_header = response.headers.get("Link", "")
-        if f'rel="next"' not in link_header:
+        if 'rel="next"' not in link_header:
             break
 
         page += 1
@@ -327,7 +361,7 @@ def _parse_github_time(time_str: str) -> datetime:
     return dt
 
 
-def _fetch_discussion(ref: ResourceRef, token: str | None) -> "DiscussionData":
+def _fetch_discussion(ref: ResourceRef, token: str | None) -> DiscussionData:
     """获取 Discussion 数据（使用 GraphQL）。
 
     Args:
@@ -340,7 +374,6 @@ def _fetch_discussion(ref: ResourceRef, token: str | None) -> "DiscussionData":
     Raises:
         GithubAPIError: API 调用失败
     """
-    import json
 
     # GraphQL 查询
     query = """
@@ -391,19 +424,21 @@ def _fetch_discussion(ref: ResourceRef, token: str | None) -> "DiscussionData":
         try:
             result = response.json()
         except ValueError as e:
-            raise GithubAPIError(f"Invalid JSON response: {str(e)}") from e
+            raise GithubAPIError(INVALID_JSON_RESPONSE.format(str(e))) from e
 
         # 检查 GraphQL 错误
         if "errors" in result:
-            error_msg = result["errors"][0].get("message", "Unknown GraphQL error")
-            if "NOT_FOUND" in error_msg:
-                raise GithubAPIError("Discussion not found or not enabled") from None
-            raise GithubAPIError(f"GraphQL error: {error_msg}") from None
+            error = result["errors"][0]
+            error_msg = error.get("message", "Unknown GraphQL error")
+            error_type = error.get("type", "")
+            if "NOT_FOUND" in error_msg or error_type == "NOT_FOUND":
+                raise GithubAPIError(DISCUSSION_NOT_FOUND.format(error_msg))
+            raise GithubAPIError(GRAPHQL_ERROR.format(error_msg))
 
         # 提取讨论数据
         discussion = result["data"]["repository"]["discussion"]
         if not discussion:
-            raise GithubAPIError("Discussion not found")
+            raise GithubAPIError(DISCUSSION_NOT_FOUND_SIMPLE)
 
         # 处理评论
         comments_page = discussion["comments"]["nodes"]

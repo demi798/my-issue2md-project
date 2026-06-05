@@ -1,5 +1,7 @@
 """CLI 入口点"""
 
+from __future__ import annotations
+
 import sys
 
 from .cli.main import main

@@ -1,8 +1,9 @@
 """Issue/PR 数据模型"""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Self
 
 from .resource import ResourceRef
 

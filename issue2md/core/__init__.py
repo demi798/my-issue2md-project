@@ -1,8 +1,10 @@
 """核心业务逻辑模块"""
 
-from .parser import parse_url, output_path
-from .github import validate_token, fetch
-from .converter import render, render_frontmatter, render_body
+from __future__ import annotations
+
+from .converter import render, render_body, render_frontmatter
+from .github import fetch, validate_token
+from .parser import output_path, parse_url
 
 __all__ = [
     "parse_url",

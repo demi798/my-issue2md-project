@@ -1,8 +1,10 @@
 """数据模型模块"""
 
-from .resource import ResourceType, ResourceRef
-from .issue import Label, Comment, IssueData
+from __future__ import annotations
+
 from .discussion import DiscussionData
+from .issue import Comment, IssueData, Label
+from .resource import ResourceRef, ResourceType
 
 __all__ = [
     "ResourceType",

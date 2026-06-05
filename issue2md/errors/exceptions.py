@@ -1,6 +1,6 @@
 """issue2md 异常定义"""
 
-from dataclasses import dataclass
+from __future__ import annotations
 
 
 class Issue2mdError(Exception):

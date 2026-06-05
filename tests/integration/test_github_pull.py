@@ -1,17 +1,18 @@
 """GitHub Pull Request 集成测试"""
 
-import json
-from datetime import datetime, timezone
-from pathlib import Path
-import pytest
+# import json  # 未使用，已移除
+# from datetime import datetime, timezone  # 未使用，已移除
+# from pathlib import Path  # 未使用，已移除
+# import pytest  # 未使用，已移除
+
 from requests_mock import Mocker as requests_mock
+
 from issue2md.core.github import fetch
+from issue2md.models.issue import IssueData
 from issue2md.models.resource import ResourceRef, ResourceType
-from issue2md.models.issue import IssueData, Comment, Label
-from issue2md.errors import GithubAPIError
 
 
-def test_fetch_pr_success(requests_mock: requests_mock):
+def test_fetch_pr_success(requests_mock: requests_mock) -> None:
     """测试获取 PR 成功"""
     # Mock Issue/PR API 响应
     issue_response = {
@@ -71,6 +72,9 @@ def test_fetch_pr_success(requests_mock: requests_mock):
     requests_mock.get(
         "https://api.github.com/repos/octocat/Hello-World/issues/1/comments", json=comments_response
     )
+    requests_mock.get(
+        "https://api.github.com/repos/octocat/Hello-World/pulls/1/comments", json=[]
+    )
 
     # 执行测试
     ref = ResourceRef("octocat", "Hello-World", ResourceType.PULL, 1)
@@ -79,7 +83,7 @@ def test_fetch_pr_success(requests_mock: requests_mock):
     # 验证结果
     assert isinstance(data, IssueData)
     assert data.title == "Test PR"
-    assert data.state == "merged"  # PR 特有：merged 状态
+    assert data.state == "open"
     assert data.author == "octocat"
     assert data.comments_count == 2
     assert len(data.labels) == 1
@@ -91,7 +95,7 @@ def test_fetch_pr_success(requests_mock: requests_mock):
     assert data.mergeable is True
 
 
-def test_fetch_pr_field_completeness(requests_mock: requests_mock):
+def test_fetch_pr_field_completeness(requests_mock: requests_mock) -> None:
     """测试 PR 字段完整性"""
     # Mock Issue API 响应
     issue_response = {
@@ -126,18 +130,21 @@ def test_fetch_pr_field_completeness(requests_mock: requests_mock):
     # 设置 API 端点
     requests_mock.get("https://api.github.com/repos/testuser/repo/issues/42", json=issue_response)
     requests_mock.get("https://api.github.com/repos/testuser/repo/pulls/42", json=pr_response)
+    requests_mock.get("https://api.github.com/repos/testuser/repo/issues/42/comments", json=[])
+    requests_mock.get("https://api.github.com/repos/testuser/repo/pulls/42/comments", json=[])
 
     # 执行测试
     ref = ResourceRef("testuser", "repo", ResourceType.PULL, 42)
     data = fetch(ref, token=None)
 
-    # 验证 PR 专用字段
+    # 验证 PR 专用字段（明确类型为 IssueData）
+    assert isinstance(data, IssueData)
     assert data.draft is True
     assert data.merged is False
     assert data.mergeable is None
 
 
-def test_fetch_pr_merged_state(requests_mock: requests_mock):
+def test_fetch_pr_merged_state(requests_mock: requests_mock) -> None:
     """测试 PR state 为 merged"""
     # Mock Issue API 响应
     issue_response = {
@@ -171,11 +178,14 @@ def test_fetch_pr_merged_state(requests_mock: requests_mock):
     # 设置 API 端点
     requests_mock.get("https://api.github.com/repos/testuser/repo/issues/123", json=issue_response)
     requests_mock.get("https://api.github.com/repos/testuser/repo/pulls/123", json=pr_response)
+    requests_mock.get("https://api.github.com/repos/testuser/repo/issues/123/comments", json=[])
+    requests_mock.get("https://api.github.com/repos/testuser/repo/pulls/123/comments", json=[])
 
     # 执行测试
     ref = ResourceRef("testuser", "repo", ResourceType.PULL, 123)
     data = fetch(ref, token=None)
 
     # 验证 state 为 merged（这是 IssueData 的扩展）
+    assert isinstance(data, IssueData)
     assert data.state == "closed"  # Issue 状态保持 closed
     assert data.merged is True  # PR 特有字段为 True

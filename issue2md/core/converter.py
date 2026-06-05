@@ -1,14 +1,13 @@
 """Markdown 转换模块"""
 
-import yaml
+from __future__ import annotations
+
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
-from ..models.issue import IssueData
+import yaml
+
 from ..models.discussion import DiscussionData
-
-if TYPE_CHECKING:
-    from ..models.resource import ResourceRef
+from ..models.issue import IssueData
 
 
 def render_frontmatter(data: IssueData | DiscussionData) -> str:
