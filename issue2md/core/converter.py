@@ -28,7 +28,6 @@ def render_frontmatter(data: IssueData | DiscussionData) -> str:
         "repo": data.ref.repo,
         "number": data.ref.number,
         "title": data.title,
-        "state": data.state,
         "author": data.author,
         "created_at": data.created_at.isoformat(),
         "updated_at": data.updated_at.isoformat(),
@@ -36,6 +35,13 @@ def render_frontmatter(data: IssueData | DiscussionData) -> str:
         "comments_count": data.comments_count,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    # 添加特定字段的扩展
+    if isinstance(data, IssueData):
+        frontmatter["state"] = data.state
+    elif isinstance(data, DiscussionData):
+        # Discussion 没有 state 字段，使用默认值 "open"
+        frontmatter["state"] = "open"
 
     # 添加特定字段的扩展
     if isinstance(data, IssueData):
@@ -74,11 +80,15 @@ def render_body(data: IssueData | DiscussionData, max_comments: int = 0) -> str:
 
     # 构建标题
     title = data.title
-    state = data.state
-    if state == "merged":
-        title = f"{title}  [merged]"
+    if isinstance(data, IssueData):
+        state = data.state
+        if state == "merged":
+            title = f"{title}  [merged]"
+        else:
+            title = f"{title}  [{state}]"
     else:
-        title = f"{title}  [{state}]"
+        # Discussion 没有 state 字段，使用默认值 "open"
+        title = f"{title}  [open]"
 
     body_parts = [f"# {title}\n"]
     body_parts.append(f"\n{data.body}\n")

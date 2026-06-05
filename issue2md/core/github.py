@@ -3,18 +3,21 @@
 import re
 import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from datetime import datetime, timezone
 
 import requests
 from requests import Response
 from ..models.resource import ResourceRef, ResourceType
+from ..models.issue import IssueData, Label, Comment
+from ..models.discussion import DiscussionData
 from ..errors import AuthError, RateLimitError, GithubAPIError
 
 import dateutil.parser
 
 if TYPE_CHECKING:
-    from ..models.issue import IssueData
+    from ..models.resource import ResourceRef, ResourceType
+    from ..models.issue import IssueData, Label, Comment
     from ..models.discussion import DiscussionData
 
 
@@ -37,12 +40,12 @@ def validate_token(token: str) -> None:
 
     # 可选：验证 Token 格式（个人访问令牌以 ghp_ 开头，但不强制）
     # 这里只做基本验证，不强制要求 ghp_ 前缀
-    token_pattern = re.compile(r'^[a-zA-Z0-9_\-]+$')
+    token_pattern = re.compile(r"^[a-zA-Z0-9_\-]+$")
     if not token_pattern.match(token):
         raise AuthError("Token 包含非法字符")
 
 
-def _handle_response(response, token: str | None) -> None:
+def _handle_response(response: Response, token: str | None) -> None:
     """处理 HTTP 响应，抛出语义化异常。
 
     Args:
@@ -63,7 +66,7 @@ def _handle_response(response, token: str | None) -> None:
         current_time = int(time.time())
         wait_seconds = reset_ts - current_time
 
-        if wait_seconds > 600:  # 超过 10 分钟
+        if wait_seconds > 600:  # 超过 600 秒
             raise RateLimitError(f"Rate limit reset too far in future: {wait_seconds}s")
 
         if wait_seconds > 0:
@@ -77,19 +80,22 @@ def _handle_response(response, token: str | None) -> None:
     status_code = response.status_code
 
     if status_code == 401:
-        raise AuthError("Invalid token")
+        raise AuthError("Invalid token") from None
     elif status_code == 403:
         # 检查是否是限流导致的 403
-        if "X-RateLimit-Remaining" in response.headers and int(response.headers["X-RateLimit-Remaining"]) == 0:
-            raise RateLimitError("Rate limit exceeded")
+        if (
+            "X-RateLimit-Remaining" in response.headers
+            and int(response.headers["X-RateLimit-Remaining"]) == 0
+        ):
+            raise RateLimitError("Rate limit exceeded") from None
         else:
-            raise AuthError("Insufficient permissions")
+            raise AuthError("Insufficient permissions") from None
     elif status_code == 404:
-        raise GithubAPIError("Resource not found")
+        raise GithubAPIError("Resource not found") from None
     elif status_code >= 500:
-        raise GithubAPIError(f"GitHub server error: {status_code}")
+        raise GithubAPIError(f"GitHub server error: {status_code}") from None
     elif not response.ok:
-        raise GithubAPIError(f"Unexpected status: {status_code}")
+        raise GithubAPIError(f"Unexpected status: {status_code}") from None
 
 
 def fetch(ref: ResourceRef, token: str | None = None) -> "IssueData | DiscussionData":
@@ -124,14 +130,24 @@ def fetch(ref: ResourceRef, token: str | None = None) -> "IssueData | Discussion
         # 检查是否是 PR
         if ref.type == ResourceType.PULL:
             pr_data = _make_request(
-                f"{base_url}/repos/{ref.owner}/{ref.repo}/pulls/{ref.number}",
-                token
+                f"{base_url}/repos/{ref.owner}/{ref.repo}/pulls/{ref.number}", token
             ).json()
         else:
             pr_data = None
 
         # 获取评论（分页）
         comments = _fetch_all_pages(comments_url, token)
+
+        # 如果是 PR，获取 review comments
+        if ref.type == ResourceType.PULL:
+            review_comments_url = (
+                f"{base_url}/repos/{ref.owner}/{ref.repo}/pulls/{ref.number}/comments"
+            )
+            review_comments = _fetch_all_pages(review_comments_url, token)
+            comments.extend(review_comments)
+
+        # 按时间排序（升序）
+        comments.sort(key=lambda c: c.get("created_at") or "")
 
         # 解析时间
         created_at = _parse_github_time(issue_data["created_at"])
@@ -148,7 +164,7 @@ def fetch(ref: ResourceRef, token: str | None = None) -> "IssueData | Discussion
             Comment(
                 author=comment["user"]["login"],
                 body=comment["body"],
-                created_at=_parse_github_time(comment["created_at"])
+                created_at=_parse_github_time(comment["created_at"]),
             )
             for comment in comments
         ]
@@ -168,9 +184,21 @@ def fetch(ref: ResourceRef, token: str | None = None) -> "IssueData | Discussion
 
         # 如果是 PR，填充 PR 专用字段
         if ref.type == ResourceType.PULL and pr_data:
-            issue_data_obj.draft = pr_data.get("draft", False)
-            issue_data_obj.merged = pr_data.get("merged", False)
-            issue_data_obj.mergeable = pr_data.get("mergeable")
+            # 使用 dataclasses.replace 来修改只读属性
+            issue_data_obj = issue_data_obj.__class__(
+                ref=issue_data_obj.ref,
+                title=issue_data_obj.title,
+                state=issue_data_obj.state,
+                author=issue_data_obj.author,
+                body=issue_data_obj.body,
+                created_at=issue_data_obj.created_at,
+                updated_at=issue_data_obj.updated_at,
+                labels=issue_data_obj.labels,
+                comments=issue_data_obj.comments,
+                draft=pr_data.get("draft", False),
+                merged=pr_data.get("merged", False),
+                mergeable=pr_data.get("mergeable"),
+            )
 
         return issue_data_obj
 
@@ -179,7 +207,13 @@ def fetch(ref: ResourceRef, token: str | None = None) -> "IssueData | Discussion
         return _fetch_discussion(ref, token)
 
 
-def _make_request(url: str, token: str | None, params: dict | None = None, data: dict | None = None, retry_on_rate_limit: bool = True) -> requests.Response:
+def _make_request(
+    url: str,
+    token: str | None,
+    params: dict[str, Any] | None = None,
+    data: dict[str, Any] | None = None,
+    retry_on_rate_limit: bool = True,
+) -> requests.Response:
     """发送 HTTP 请求并处理响应。
 
     Args:
@@ -216,8 +250,11 @@ def _make_request(url: str, token: str | None, params: dict | None = None, data:
         _handle_response(response, token)
 
         # 如果触发了限流，尝试重试一次
-        if retry_on_rate_limit and response.status_code == 200 and \
-           response.headers.get("X-RateLimit-Remaining") == "0":
+        if (
+            retry_on_rate_limit
+            and response.status_code == 200
+            and response.headers.get("X-RateLimit-Remaining") == "0"
+        ):
             # 已经在 _handle_response 中处理了等待
             if data is not None:
                 response = requests.post(url, headers=headers, json=data)
@@ -231,7 +268,7 @@ def _make_request(url: str, token: str | None, params: dict | None = None, data:
         raise GithubAPIError(f"Network error: {str(e)}") from e
 
 
-def _fetch_all_pages(url: str, token: str | None) -> list:
+def _fetch_all_pages(url: str, token: str | None) -> list[dict[str, Any]]:
     """获取所有分页数据。
 
     Args:
@@ -243,7 +280,7 @@ def _fetch_all_pages(url: str, token: str | None) -> list:
     """
     from urllib.parse import parse_qs, urlparse
 
-    all_data = []
+    all_data: list[dict[str, Any]] = []
     page = 1
     per_page = 100
 
@@ -335,26 +372,20 @@ def _fetch_discussion(ref: ResourceRef, token: str | None) -> "DiscussionData":
     graphql_url = "https://api.github.com/graphql"
 
     # 构建查询变量
-    variables = {
+    variables: dict[str, Any] = {
         "owner": ref.owner,
         "repo": ref.repo,
         "number": ref.number,
         "cursor": None,
     }
 
-    all_comments = []
+    all_comments: list[dict[str, Any]] = []
 
     # 获取所有评论（GraphQL 分页）
     while True:
         # 执行 GraphQL 查询
         response = _make_request(
-            graphql_url,
-            token,
-            params=None,
-            data={
-                "query": query,
-                "variables": variables
-            }
+            graphql_url, token, params=None, data={"query": query, "variables": variables}
         )
 
         try:
@@ -366,8 +397,8 @@ def _fetch_discussion(ref: ResourceRef, token: str | None) -> "DiscussionData":
         if "errors" in result:
             error_msg = result["errors"][0].get("message", "Unknown GraphQL error")
             if "NOT_FOUND" in error_msg:
-                raise GithubAPIError("Discussion not found or not enabled")
-            raise GithubAPIError(f"GraphQL error: {error_msg}")
+                raise GithubAPIError("Discussion not found or not enabled") from None
+            raise GithubAPIError(f"GraphQL error: {error_msg}") from None
 
         # 提取讨论数据
         discussion = result["data"]["repository"]["discussion"]
@@ -397,7 +428,7 @@ def _fetch_discussion(ref: ResourceRef, token: str | None) -> "DiscussionData":
         Comment(
             author=comment["author"]["login"],
             body=comment["body"],
-            created_at=_parse_github_time(comment["createdAt"])
+            created_at=_parse_github_time(comment["createdAt"]),
         )
         for comment in all_comments
     ]
@@ -417,7 +448,7 @@ def _fetch_discussion(ref: ResourceRef, token: str | None) -> "DiscussionData":
         category=discussion["category"]["name"],
         labels=labels,
         comments=comment_objects,
-        answer_chosen=discussion["answerChosen"]
+        answer_chosen=discussion["answerChosen"],
     )
 
     return discussion_data

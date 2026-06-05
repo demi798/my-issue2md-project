@@ -5,7 +5,6 @@ from pathlib import Path
 from ..models.resource import ResourceRef, ResourceType
 from ..errors import URLParseError
 
-
 # 资源类型映射
 _RESOURCE_TYPE_MAP: dict[str, ResourceType] = {
     "issues": ResourceType.ISSUE,

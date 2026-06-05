@@ -4,11 +4,23 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 import pytest
-from pytest_httpserver import HTTPServer
+import requests_mock
 from issue2md.cli.main import main
 
 
-def test_cli_single_issue_success(httpserver: HTTPServer, tmp_path: Path):
+def test_cli_invalid_url(tmp_path: Path):
+    """测试非法 URL"""
+    url = "https://invalid-url"
+    exit_code = main([url, "-o", str(tmp_path)])
+
+    # 验证返回码 1
+    assert exit_code == 1
+
+    # 没有文件被创建
+    assert not (tmp_path / "out").exists()
+
+
+def test_cli_single_issue_success(requests_mock: requests_mock, tmp_path: Path):
     """测试 CLI 单个 Issue 成功"""
     # Mock GitHub API 响应
     issue_response = {
@@ -18,9 +30,7 @@ def test_cli_single_issue_success(httpserver: HTTPServer, tmp_path: Path):
         "user": {"login": "octocat"},
         "created_at": "2023-01-02T03:04:05Z",
         "updated_at": "2023-06-01T07:08:09Z",
-        "labels": [
-            {"name": "bug", "color": "d73a4a"}
-        ],
+        "labels": [{"name": "bug", "color": "d73a4a"}],
         "pull_request": None,
     }
 
@@ -33,9 +43,13 @@ def test_cli_single_issue_success(httpserver: HTTPServer, tmp_path: Path):
         }
     ]
 
-    # 设置 API 端点
-    httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json(issue_response)
-    httpserver.expect_request("/repos/octocat/Hello-World/issues/1/comments").respond_with_json(comments_response)
+    # Mock API 端点
+    requests_mock.get(
+        "https://api.github.com/repos/octocat/Hello-World/issues/1", json=issue_response
+    )
+    requests_mock.get(
+        "https://api.github.com/repos/octocat/Hello-World/issues/1/comments", json=comments_response
+    )
 
     # 执行 CLI
     url = "https://github.com/octocat/Hello-World/issues/1"
@@ -56,7 +70,7 @@ def test_cli_single_issue_success(httpserver: HTTPServer, tmp_path: Path):
     assert "octocat" in content
 
 
-def test_cli_single_pull_success(httpserver: HTTPServer, tmp_path: Path):
+def test_cli_single_pull_success(requests_mock: requests_mock, tmp_path: Path):
     """测试 CLI 单个 PR 成功"""
     # Mock Issue API 响应
     issue_response = {
@@ -86,9 +100,9 @@ def test_cli_single_pull_success(httpserver: HTTPServer, tmp_path: Path):
         "mergeable": True,
     }
 
-    # 设置 API 端点
-    httpserver.expect_request("/repos/testuser/repo/issues/42").respond_with_json(issue_response)
-    httpserver.expect_request("/repos/testuser/repo/pulls/42").respond_with_json(pr_response)
+    # Mock API 端点
+    requests_mock.get("https://api.github.com/repos/testuser/repo/issues/42", json=issue_response)
+    requests_mock.get("https://api.github.com/repos/testuser/repo/pulls/42", json=pr_response)
 
     # 执行 CLI
     url = "https://github.com/testuser/repo/pull/42"
@@ -108,7 +122,7 @@ def test_cli_single_pull_success(httpserver: HTTPServer, tmp_path: Path):
     assert "merged: true" in content  # frontmatter 中的 merged 字段
 
 
-def test_cli_single_discussion_success(httpserver: HTTPServer, tmp_path: Path):
+def test_cli_single_discussion_success(requests_mock: requests_mock, tmp_path: Path):
     """测试 CLI 单个 Discussion 成功"""
     # Mock GraphQL 响应
     graphql_response = {
@@ -117,32 +131,23 @@ def test_cli_single_discussion_success(httpserver: HTTPServer, tmp_path: Path):
                 "discussion": {
                     "title": "Test Discussion from CLI",
                     "body": "This is a test discussion body from CLI",
-                    "author": {
-                        "login": "discussuser"
-                    },
+                    "author": {"login": "discussuser"},
                     "createdAt": "2023-01-02T03:04:05Z",
                     "updatedAt": "2023-06-01T07:08:09Z",
-                    "category": {
-                        "name": "Q&A"
-                    },
-                    "labels": {
-                        "nodes": []
-                    },
+                    "category": {"name": "Q&A"},
+                    "labels": {"nodes": []},
                     "comments": {
                         "nodes": [],
-                        "pageInfo": {
-                            "hasNextPage": False,
-                            "endCursor": None
-                        }
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
                     },
-                    "answerChosen": false
+                    "answerChosen": False,
                 }
             }
         }
     }
 
-    # 设置 GraphQL 端点
-    httpserver.expect_request("/graphql", method="POST").respond_with_json(graphql_response)
+    # Mock GraphQL 端点
+    requests_mock.post("https://api.github.com/graphql", json=graphql_response)
 
     # 执行 CLI
     url = "https://github.com/discussuser/repo/discussions/100"
@@ -174,11 +179,13 @@ def test_cli_invalid_url(tmp_path: Path):
     assert not (tmp_path / "out").exists()
 
 
-def test_cli_private_repo_without_token(httpserver: HTTPServer, tmp_path: Path):
+def test_cli_private_repo_without_token(requests_mock: requests_mock, tmp_path: Path):
     """测试私有仓库无 Token"""
     # Mock 403 响应
-    httpserver.expect_request("/repos/private/repo/issues/1").respond_with_json(
-        {"message": "Not Found"}, status=403
+    requests_mock.get(
+        "https://api.github.com/repos/private/repo/issues/1",
+        json={"message": "Not Found"},
+        status=403,
     )
 
     # 执行 CLI
@@ -220,7 +227,7 @@ def test_cli_duplicate_urls(tmp_path: Path):
     assert output_file.exists()
 
 
-def test_cli_batch_with_continue_on_error(httpserver: HTTPServer, tmp_path: Path):
+def test_cli_batch_with_continue_on_error(requests_mock: requests_mock, tmp_path: Path):
     """测试批量处理 + continue-on-error"""
     # 第一个 URL 正常
     issue_response1 = {
@@ -233,11 +240,13 @@ def test_cli_batch_with_continue_on_error(httpserver: HTTPServer, tmp_path: Path
         "labels": [],
         "pull_request": None,
     }
-    httpserver.expect_request("/repos/test/repo/issues/1").respond_with_json(issue_response1)
+    requests_mock.get("https://api.github.com/repos/test/repo/issues/1", json=issue_response1)
 
     # 第二个 URL 404
-    httpserver.expect_request("/repos/test/repo/issues/404").respond_with_json(
-        {"message": "Not Found"}, status=404
+    requests_mock.get(
+        "https://api.github.com/repos/test/repo/issues/404",
+        json={"message": "Not Found"},
+        status=404,
     )
 
     # 第三个 URL 正常
@@ -251,13 +260,13 @@ def test_cli_batch_with_continue_on_error(httpserver: HTTPServer, tmp_path: Path
         "labels": [],
         "pull_request": None,
     }
-    httpserver.expect_request("/repos/test/repo/issues/3").respond_with_json(issue_response3)
+    requests_mock.get("https://api.github.com/repos/test/repo/issues/3", json=issue_response3)
 
     # 执行批量处理
     urls = [
         "https://github.com/test/repo/issues/1",
         "https://github.com/test/repo/issues/404",
-        "https://github.com/test/repo/issues/3"
+        "https://github.com/test/repo/issues/3",
     ]
     exit_code = main(urls + ["--continue-on-error", "-o", str(tmp_path)])
 
@@ -272,7 +281,7 @@ def test_cli_batch_with_continue_on_error(httpserver: HTTPServer, tmp_path: Path
     assert (tmp_path / "test" / "repo" / "issues" / "3.md").exists()
 
 
-def test_cli_max_comments_truncation(httpserver: HTTPServer, tmp_path: Path):
+def test_cli_max_comments_truncation(requests_mock: requests_mock, tmp_path: Path):
     """测试 max-comments 截断"""
     # Mock GitHub API 响应（20 条评论）
     issue_response = {
@@ -289,16 +298,18 @@ def test_cli_max_comments_truncation(httpserver: HTTPServer, tmp_path: Path):
     # 生成 20 条评论
     comments = []
     for i in range(20):
-        comments.append({
-            "id": i + 1,
-            "user": {"login": f"user{i}"},
-            "body": f"Comment {i+1}",
-            "created_at": f"2023-01-02T0{i:02d}:00:00Z",
-        })
+        comments.append(
+            {
+                "id": i + 1,
+                "user": {"login": f"user{i}"},
+                "body": f"Comment {i+1}",
+                "created_at": f"2023-01-02T0{i:02d}:00:00Z",
+            }
+        )
 
     # 设置 API 端点
-    httpserver.expect_request("/repos/test/repo/issues/1").respond_with_json(issue_response)
-    httpserver.expect_request("/repos/test/repo/issues/1/comments").respond_with_json(comments)
+    requests_mock.get("https://api.github.com/repos/test/repo/issues/1", json=issue_response)
+    requests_mock.get("https://api.github.com/repos/test/repo/issues/1/comments", json=comments)
 
     # 执行 CLI（限制 5 条评论）
     url = "https://github.com/test/repo/issues/1"

@@ -11,12 +11,15 @@ from issue2md.errors import AuthError, RateLimitError, GithubAPIError
 class TestValidateToken:
     """测试 Token 验证"""
 
-    @pytest.mark.parametrize("token", [
-        "",           # 空字符串
-        "   ",        # 仅空格
-        "\t",         # 仅制表符
-        "\n",         # 仅换行符
-    ])
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "",  # 空字符串
+            "   ",  # 仅空格
+            "\t",  # 仅制表符
+            "\n",  # 仅换行符
+        ],
+    )
     def test_validate_token_empty_string(self, token: str):
         """空字符串应抛出 AuthError"""
         with pytest.raises(AuthError) as exc_info:
@@ -24,13 +27,16 @@ class TestValidateToken:
 
         assert "Token 不能为空" in str(exc_info.value) or "无效" in str(exc_info.value)
 
-    @pytest.mark.parametrize("token", [
-        "a",              # 1 字符
-        "short",          # 5 字符
-        "way_too_short",  # 13 字符
-        "x" * 19,         # 19 字符
-        "abc123",         # 6 字符
-    ])
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "a",  # 1 字符
+            "short",  # 5 字符
+            "way_too_short",  # 13 字符
+            "x" * 19,  # 19 字符
+            "abc123",  # 6 字符
+        ],
+    )
     def test_validate_token_too_short(self, token: str):
         """长度 < 20 应抛出 AuthError"""
         with pytest.raises(AuthError) as exc_info:
@@ -38,13 +44,16 @@ class TestValidateToken:
 
         assert "长度" in str(exc_info.value) or "20" in str(exc_info.value)
 
-    @pytest.mark.parametrize("token", [
-        "x" * 20,         # 正好 20 字符
-        "x" * 40,         # 40 字符（标准 PAT 长度）
-        "x" * 60,         # 60 字符
-        "ghp_" + "x" * 36,  # 标准格式
-        "valid_token_with_length_1234567890",  # 合法字符串
-    ])
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "x" * 20,  # 正好 20 字符
+            "x" * 40,  # 40 字符（标准 PAT 长度）
+            "x" * 60,  # 60 字符
+            "ghp_" + "x" * 36,  # 标准格式
+            "valid_token_with_length_1234567890",  # 合法字符串
+        ],
+    )
     def test_validate_token_valid(self, token: str):
         """长度 >= 20 的合法 Token 不应抛出异常"""
         # 不应抛出任何异常

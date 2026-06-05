@@ -10,6 +10,7 @@ from .resource import ResourceRef
 @dataclass(frozen=True)
 class Label:
     """Issue/PR 的标签。"""
+
     name: str
     color: str | None = None
 
@@ -17,6 +18,7 @@ class Label:
 @dataclass(frozen=True)
 class Comment:
     """通用评论结构。"""
+
     author: str
     body: str
     created_at: datetime
@@ -25,6 +27,7 @@ class Comment:
 @dataclass(frozen=True)
 class IssueData:
     """Issue 或 Pull Request 的完整数据。"""
+
     ref: ResourceRef
     title: str
     state: str

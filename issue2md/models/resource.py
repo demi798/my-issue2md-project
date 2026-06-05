@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 class ResourceType(str, Enum):
     """GitHub 资源类型枚举"""
+
     ISSUE = "issues"
     PULL = "pulls"
     DISCUSSION = "discussions"
@@ -14,6 +15,7 @@ class ResourceType(str, Enum):
 @dataclass(frozen=True)
 class ResourceRef:
     """GitHub 资源的引用标识，解析自 URL。"""
+
     owner: str
     repo: str
     type: ResourceType

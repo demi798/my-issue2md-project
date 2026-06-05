@@ -40,6 +40,7 @@ class TestDiscussionData:
     def test_with_labels(self):
         """测试包含标签"""
         from issue2md.models.issue import Label
+
         label = Label("help", "008672")
         discussion = DiscussionData(
             ref=self.ref,
@@ -57,6 +58,7 @@ class TestDiscussionData:
     def test_with_comments(self):
         """测试包含评论"""
         from issue2md.models.issue import Comment
+
         comment = Comment("jane", "You can use the API routes!", self.created_at)
         discussion = DiscussionData(
             ref=self.ref,
@@ -88,6 +90,7 @@ class TestDiscussionData:
     def test_comments_count_property(self):
         """测试 comments_count 属性"""
         from issue2md.models.issue import Comment
+
         comment1 = Comment("user1", "Comment 1", self.created_at)
         comment2 = Comment("user2", "Comment 2", self.created_at)
         discussion = DiscussionData(

@@ -1,0 +1,397 @@
+"""验收测试 - 覆盖所有 AC 场景"""
+import os
+import tempfile
+import shutil
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+import pytest
+# HTTPServer 已弃用，改用 requests_mock
+from requests_mock import Mocker as requests_mock
+
+from issue2md.cli.main import main
+from issue2md.errors import GithubAPIError, AuthError, FileIOError
+from issue2md.models.resource import ResourceRef, ResourceType
+
+
+class TestAcceptance:
+    """验收测试类，覆盖所有 AC 场景"""
+
+    def setup_method(self):
+        """每个测试前执行"""
+        self.temp_dir = tempfile.mkdtemp()
+        self.original_cwd = os.getcwd()
+        os.chdir(self.temp_dir)
+
+    def teardown_method(self):
+        """每个测试后执行"""
+        os.chdir(self.original_cwd)
+        shutil.rmtree(self.temp_dir)
+
+    def test_ac1_single_issue_success(self, httpserver: HTTPServer):
+        """AC1: 单个 Issue 成功场景"""
+        # Mock GitHub API 响应
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test Issue",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Test body content",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [{"name": "bug", "color": "d73a4a"}],
+            "pull_request": None,
+        })
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1/comments").respond_with_json([
+            {
+                "user": {"login": "user1"},
+                "body": "Comment 1 content",
+                "created_at": "2026-01-03T04:05:06Z",
+            },
+            {
+                "user": {"login": "user2"},
+                "body": "Comment 2 content",
+                "created_at": "2026-01-04T05:06:07Z",
+            }
+        ])
+
+        # 执行测试
+        url = "https://github.com/octocat/Hello-World/issues/1"
+        exit_code = main([url])
+
+        # 验证结果
+        assert exit_code == 0
+        output_file = Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "issues" / "1.md"
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "Test Issue" in content
+        assert "Comment 1 content" in content
+        assert "Comment 2 content" in content
+
+    def test_ac2_rate_limit_retry(self, httpserver: HTTPServer):
+        """AC2: 限流重试场景"""
+        # 第一次返回限流响应
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json(
+            {}, status=403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time()) + 5)}
+        )
+        # 第二次返回正常响应
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test Issue",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Test body",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [],
+            "pull_request": None,
+        })
+
+        # 执行测试
+        url = "https://github.com/octocat/Hello-World/issues/1"
+        exit_code = main([url])
+
+        # 验证结果
+        assert exit_code == 0
+
+    def test_ac3_single_pull_success(self, httpserver: HTTPServer):
+        """AC3: 单个 PR 成功场景"""
+        # Mock PR 响应
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test PR",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "PR body content",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [],
+            "pull_request": {"html_url": "https://github.com/octocat/Hello-World/pull/1"},
+        })
+        httpserver.expect_request("/repos/octocat/Hello-World/pulls/1").respond_with_json({
+            "draft": False,
+            "merged": False,
+            "mergeable": True,
+        })
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1/comments").respond_with_json([])
+
+        # 执行测试
+        url = "https://github.com/octocat/Hello-World/pull/1"
+        exit_code = main([url])
+
+        # 验证结果
+        assert exit_code == 0
+        output_file = Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "pulls" / "1.md"
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "Test PR" in content
+        assert "merged: false" in content  # 检查 PR 专用字段
+
+    def test_ac4_discussion_success(self, httpserver: HTTPServer):
+        """AC4: Discussion 成功场景"""
+        # Mock GraphQL 响应
+        httpserver.expect_request("/graphql").respond_with_json({
+            "data": {
+                "repository": {
+                    "discussion": {
+                        "title": "Test Discussion",
+                        "body": "Discussion body content",
+                        "author": {"login": "octocat"},
+                        "createdAt": "2026-01-02T03:04:05Z",
+                        "updatedAt": "2026-06-01T07:08:09Z",
+                        "category": {"name": "General"},
+                        "labels": {"nodes": [{"name": "bug", "color": "d73a4a"}]},
+                        "answerChosen": False,
+                        "comments": {
+                            "nodes": [],
+                            "pageInfo": {"hasNextPage": False}
+                        }
+                    }
+                }
+            }
+        })
+
+        # 执行测试
+        url = "https://github.com/octocat/Hello-World/discussions/1"
+        exit_code = main([url])
+
+        # 验证结果
+        assert exit_code == 0
+        output_file = Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "discussions" / "1.md"
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "Test Discussion" in content
+        assert "category: General" in content  # 检查 Discussion 专用字段
+
+    def test_ac5_batch_continue_on_error(self, httpserver: HTTPServer):
+        """AC5: 批量 + continue-on-error 场景"""
+        # 第一个 URL 正常
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test Issue 1",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Body 1",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [],
+            "pull_request": None,
+        })
+
+        # 第二个 URL 404
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/2").respond_with_json(
+            {}, status=404
+        )
+
+        # 第三个 URL 正常
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/3").respond_with_json({
+            "title": "Test Issue 3",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Body 3",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [],
+            "pull_request": None,
+        })
+
+        # 执行测试
+        urls = [
+            "https://github.com/octocat/Hello-World/issues/1",
+            "https://github.com/octocat/Hello-World/issues/2",  # 这个会失败
+            "https://github.com/octocat/Hello-World/issues/3",
+        ]
+        exit_code = main(urls + ["--continue-on-error"])
+
+        # 验证结果
+        assert exit_code == 2  # 最严重的错误码
+        assert Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "issues" / "1.md" in output_file.exists()
+        assert Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "issues" / "3.md" in output_file.exists()
+
+    def test_ac6_invalid_url(self):
+        """AC6: 非法 URL 场景"""
+        # 执行测试
+        exit_code = main(["https://invalid-url"])
+
+        # 验证结果
+        assert exit_code == 1
+
+    def test_ac7_auth_failure(self, httpserver: HTTPServer):
+        """AC7: 鉴权失败场景"""
+        # Mock 403 响应（无权限）
+        httpserver.expect_request("/repos/private/repo/issues/1").respond_with_json(
+            {}, status=403
+        )
+
+        # 执行测试
+        exit_code = main(["https://github.com/private/repo/issues/1"])
+
+        # 验证结果
+        assert exit_code == 4
+
+    def test_ac8_io_error(self):
+        """AC8: IO 错误场景（只读目录）"""
+        # 创建只读目录
+        output_dir = Path(self.temp_dir) / "out"
+        output_dir.mkdir(parents=True)
+        output_dir.chmod(0o555)  # 设置为只读
+
+        # 执行测试
+        exit_code = main(["https://github.com/octocat/Hello-World/issues/1", "-o", str(output_dir)])
+
+        # 验证结果
+        assert exit_code == 3
+
+    def test_ac9_url_deduplication(self, httpserver: HTTPServer):
+        """AC9: URL 去重场景"""
+        # Mock 响应
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test Issue",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Body",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [],
+            "pull_request": None,
+        })
+
+        # 执行测试 - 重复 URL
+        urls = [
+            "https://github.com/octocat/Hello-World/issues/1",
+            "https://github.com/octocat/Hello-World/issues/1",  # 重复
+        ]
+        exit_code = main(urls)
+
+        # 验证结果
+        assert exit_code == 0
+        output_file = Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "issues" / "1.md"
+        assert output_file.exists()
+        # 只应该有一个文件
+
+    def test_ac10_max_comments_truncation(self, httpserver: HTTPServer):
+        """AC10: max-comments 截断场景"""
+        # Mock 响应 - 5 条评论
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test Issue",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Body",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [],
+            "pull_request": None,
+        })
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1/comments").respond_with_json([
+            {"user": {"login": "user1"}, "body": "Comment 1", "created_at": "2026-01-03T04:05:06Z"},
+            {"user": {"login": "user2"}, "body": "Comment 2", "created_at": "2026-01-04T05:06:07Z"},
+            {"user": {"login": "user3"}, "body": "Comment 3", "created_at": "2026-01-05T06:07:08Z"},
+            {"user": {"login": "user4"}, "body": "Comment 4", "created_at": "2026-01-06T07:08:09Z"},
+            {"user": {"login": "user5"}, "body": "Comment 5", "created_at": "2026-01-07T08:09:10Z"},
+        ])
+
+        # 执行测试 - 限制为 3 条评论
+        exit_code = main(["https://github.com/octocat/Hello-World/issues/1", "--max-comments=3"])
+
+        # 验证结果
+        assert exit_code == 0
+        output_file = Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "issues" / "1.md"
+        content = output_file.read_text()
+        assert "Comment 1" in content
+        assert "Comment 2" in content
+        assert "Comment 3" in content
+        assert "Comment 4" not in content  # 应该被截断
+        assert "Comment 5" not in content  # 应该被截断
+
+    def test_output_structure(self, httpserver: HTTPServer):
+        """验证输出目录结构"""
+        # Mock 响应
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test Issue",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Body",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [],
+            "pull_request": None,
+        })
+
+        # 执行测试
+        exit_code = main(["https://github.com/octocat/Hello-World/issues/1"])
+
+        # 验证目录结构
+        assert exit_code == 0
+        output_dir = Path(self.temp_dir) / "out"
+        assert output_dir.exists()
+        assert (output_dir / "octocat" / "Hello-World" / "issues" / "1.md").exists()
+
+    def test_frontmatter_format(self, httpserver: HTTPServer):
+        """验证 frontmatter 格式"""
+        # Mock 响应
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test Issue",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Body",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [{"name": "bug", "color": "d73a4a"}],
+            "pull_request": None,
+        })
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1/comments").respond_with_json([])
+
+        # 执行测试
+        exit_code = main(["https://github.com/octocat/Hello-World/issues/1"])
+
+        # 验证 frontmatter
+        assert exit_code == 0
+        output_file = Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "issues" / "1.md"
+        content = output_file.read_text()
+
+        # 检查 YAML frontmatter
+        assert content.startswith("---")
+        assert "url: https://github.com/octocat/Hello-World/issues/1" in content
+        assert "type: issue" in content
+        assert "owner: octocat" in content
+        assert "repo: Hello-World" in content
+        assert "number: 1" in content
+        assert "title: Test Issue" in content
+        assert "state: open" in content
+        assert "author: octocat" in content
+        assert "created_at: 2026-01-02T03:04:05Z" in content
+        assert "updated_at: 2026-06-01T07:08:09Z" in content
+        assert "labels:" in content
+        assert "- bug" in content
+        assert "comments_count: 0" in content
+        assert "fetched_at:" in content  # 应该有当前时间
+
+    def test_comments_ordering(self, httpserver: HTTPServer):
+        """验证评论按时间排序"""
+        # Mock 响应 - 评论按时间倒序（创建时间晚的在前）
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1").respond_with_json({
+            "title": "Test Issue",
+            "state": "open",
+            "user": {"login": "octocat"},
+            "body": "Body",
+            "created_at": "2026-01-02T03:04:05Z",
+            "updated_at": "2026-06-01T07:08:09Z",
+            "labels": [],
+            "pull_request": None,
+        })
+        httpserver.expect_request("/repos/octocat/Hello-World/issues/1/comments").respond_with_json([
+            {"user": {"login": "user2"}, "body": "Comment 2 (later)", "created_at": "2026-01-04T05:06:07Z"},
+            {"user": {"login": "user1"}, "body": "Comment 1 (earlier)", "created_at": "2026-01-03T04:05:06Z"},
+        ])
+
+        # 执行测试
+        exit_code = main(["https://github.com/octocat/Hello-World/issues/1"])
+
+        # 验证结果 - 评论应该按 created_at 升序排列
+        assert exit_code == 0
+        output_file = Path(self.temp_dir) / "out" / "octocat" / "Hello-World" / "issues" / "1.md"
+        content = output_file.read_text()
+
+        # 检查评论顺序
+        assert "Comment 1 — @user1" in content  # 应该先出现
+        assert "Comment 2 — @user2" in content  # 应该后出现
+
+
+# 导入 time 模块用于测试
+import time

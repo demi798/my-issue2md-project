@@ -15,39 +15,97 @@ class TestParseURLValid:
         "url,expected_owner,expected_repo,expected_type,expected_number",
         [
             # Issue URL
-            ("https://github.com/octocat/Hello-World/issues/1", "octocat", "Hello-World", ResourceType.ISSUE, 1),
+            (
+                "https://github.com/octocat/Hello-World/issues/1",
+                "octocat",
+                "Hello-World",
+                ResourceType.ISSUE,
+                1,
+            ),
             ("https://github.com/owner/repo/issues/42", "owner", "repo", ResourceType.ISSUE, 42),
-            ("https://github.com/vercel/next.js/issues/100", "vercel", "next.js", ResourceType.ISSUE, 100),
-
+            (
+                "https://github.com/vercel/next.js/issues/100",
+                "vercel",
+                "next.js",
+                ResourceType.ISSUE,
+                100,
+            ),
             # PR URL
-            ("https://github.com/octocat/Hello-World/pull/1", "octocat", "Hello-World", ResourceType.PULL, 1),
+            (
+                "https://github.com/octocat/Hello-World/pull/1",
+                "octocat",
+                "Hello-World",
+                ResourceType.PULL,
+                1,
+            ),
             ("https://github.com/owner/repo/pull/42", "owner", "repo", ResourceType.PULL, 42),
             ("https://github.com/vuejs/vue/pull/1234", "vuejs", "vue", ResourceType.PULL, 1234),
-
             # Discussion URL
-            ("https://github.com/vercel/next.js/discussions/1", "vercel", "next.js", ResourceType.DISCUSSION, 1),
-            ("https://github.com/owner/repo/discussions/42", "owner", "repo", ResourceType.DISCUSSION, 42),
-            ("https://github.com/openai/openai-python/discussions/100", "openai", "openai-python", ResourceType.DISCUSSION, 100),
-
+            (
+                "https://github.com/vercel/next.js/discussions/1",
+                "vercel",
+                "next.js",
+                ResourceType.DISCUSSION,
+                1,
+            ),
+            (
+                "https://github.com/owner/repo/discussions/42",
+                "owner",
+                "repo",
+                ResourceType.DISCUSSION,
+                42,
+            ),
+            (
+                "https://github.com/openai/openai-python/discussions/100",
+                "openai",
+                "openai-python",
+                ResourceType.DISCUSSION,
+                100,
+            ),
             # 带末尾斜杠
-            ("https://github.com/octocat/Hello-World/issues/1/", "octocat", "Hello-World", ResourceType.ISSUE, 1),
+            (
+                "https://github.com/octocat/Hello-World/issues/1/",
+                "octocat",
+                "Hello-World",
+                ResourceType.ISSUE,
+                1,
+            ),
             ("https://github.com/owner/repo/pull/42/", "owner", "repo", ResourceType.PULL, 42),
-            ("https://github.com/vercel/next.js/discussions/100/", "vercel", "next.js", ResourceType.DISCUSSION, 100),
-
+            (
+                "https://github.com/vercel/next.js/discussions/100/",
+                "vercel",
+                "next.js",
+                ResourceType.DISCUSSION,
+                100,
+            ),
             # 不同大小写（保留原始大小写）
-            ("https://github.com/Octocat/Hello-World/issues/1", "Octocat", "Hello-World", ResourceType.ISSUE, 1),
+            (
+                "https://github.com/Octocat/Hello-World/issues/1",
+                "Octocat",
+                "Hello-World",
+                ResourceType.ISSUE,
+                1,
+            ),
             ("https://github.com/user/MyRepo/issues/2", "user", "MyRepo", ResourceType.ISSUE, 2),
         ],
     )
-    def test_parse_url_valid(self, url: str, expected_owner: str, expected_repo: str,
-                             expected_type: ResourceType, expected_number: int):
+    def test_parse_url_valid(
+        self,
+        url: str,
+        expected_owner: str,
+        expected_repo: str,
+        expected_type: ResourceType,
+        expected_number: int,
+    ):
         """测试合法 URL 解析"""
         result = parse_url(url)
 
         assert result.owner == expected_owner, f"owner: 预期 {expected_owner}, 实际 {result.owner}"
         assert result.repo == expected_repo, f"repo: 预期 {expected_repo}, 实际 {result.repo}"
         assert result.type == expected_type, f"type: 预期 {expected_type}, 实际 {result.type}"
-        assert result.number == expected_number, f"number: 预期 {expected_number}, 实际 {result.number}"
+        assert (
+            result.number == expected_number
+        ), f"number: 预期 {expected_number}, 实际 {result.number}"
 
 
 class TestParseURLInvalid:
@@ -60,38 +118,31 @@ class TestParseURLInvalid:
             ("http://github.com/owner/repo/issues/1", "协议必须是 https"),
             ("ftp://github.com/owner/repo/issues/1", "协议必须是 https"),
             ("github.com/owner/repo/issues/1", "缺少协议"),
-
             # 非github.com域名
             ("https://gitlab.com/owner/repo/issues/1", "域名必须是 github.com"),
             ("https://bitbucket.org/owner/repo/issues/1", "域名必须是 github.com"),
             ("https://enterprise.github.com/owner/repo/issues/1", "域名必须是 github.com"),
-
             # 路径格式错误
             ("https://github.com/owner/repo", "缺少资源类型和编号"),
             ("https://github.com/owner/repo/issues", "缺少编号"),
             ("https://github.com/owner/repo/issues/", "编号为空"),
             ("https://github.com/owner", "缺少仓库名"),
-
             # number 非数字
             ("https://github.com/owner/repo/issues/abc", "编号必须是数字"),
             ("https://github.com/owner/repo/issues/1a", "编号必须是数字"),
             ("https://github.com/owner/repo/issues/-1", "编号必须是正整数"),
             ("https://github.com/owner/repo/issues/0", "编号必须是正整数"),
-
             # 不支持的资源类型
             ("https://github.com/owner/repo/commits/abc123", "不支持的资源类型: commits"),
             ("https://github.com/owner/repo/files/1", "不支持的资源类型: files"),
             ("https://github.com/owner/repo/releases/1", "不支持的资源类型: releases"),
             ("https://github.com/owner/repo/wiki", "不支持的资源类型: wiki"),
             ("https://github.com/owner/repo/tree/main", "不支持的资源类型: tree"),
-
             # 路径段过多
             ("https://github.com/owner/repo/issues/1/files/1", "路径段过多"),
             ("https://github.com/owner/repo/pull/42/commits", "路径段过多"),
-
             # 空字符串
             ("", "URL 不能为空"),
-
             # 查询参数应该被拒绝
             ("https://github.com/owner/repo/issues/1?foo=bar", "不支持查询参数"),
         ],
@@ -103,7 +154,9 @@ class TestParseURLInvalid:
 
         # 验证异常消息包含原因
         if reason != "URL 不能为空":
-            assert reason in str(exc_info.value) or len(str(exc_info.value)) > 0, f"异常消息应包含相关信息: {exc_info.value}"
+            assert (
+                reason in str(exc_info.value) or len(str(exc_info.value)) > 0
+            ), f"异常消息应包含相关信息: {exc_info.value}"
 
 
 class TestParseURLEdgeCases:

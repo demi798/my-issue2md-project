@@ -10,6 +10,7 @@ from .issue import Comment, Label
 @dataclass(frozen=True)
 class DiscussionData:
     """Discussion 的完整数据。"""
+
     ref: ResourceRef
     title: str
     author: str

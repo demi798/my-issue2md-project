@@ -3,7 +3,7 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from ..core import parse_url, output_path, fetch, render, validate_token
 from ..errors import Issue2mdError, URLParseError, AuthError, FileIOError
@@ -33,14 +33,16 @@ def parse_args(args: List[str] | None = None) -> argparse.Namespace:
 
     # 从文件读取 URL
     parser.add_argument(
-        "-f", "--from-file",
+        "-f",
+        "--from-file",
         type=Path,
         help="Read URLs from file (one per line, # comments ignored)",
     )
 
     # 输出目录
     parser.add_argument(
-        "-o", "--output-dir",
+        "-o",
+        "--output-dir",
         type=Path,
         default=Path("out"),
         help="Output root directory (default: ./out)",
@@ -134,7 +136,7 @@ def main(args: List[str] | None = None) -> int:
         return e.exit_code
     except Exception as e:
         print(f"[FATAL] Unexpected error: {e}", file=sys.stderr)
-        if namespace.verbose if 'namespace' in locals() else False:
+        if namespace.verbose if "namespace" in locals() else False:
             raise
         return 1
 
@@ -146,6 +148,7 @@ def get_github_token() -> Optional[str]:
         Token 字符串或 None
     """
     import os
+
     return os.environ.get("GITHUB_TOKEN")
 
 
@@ -181,19 +184,19 @@ def load_url_list(file_path: Path) -> List[str]:
         FileIOError: 文件读取失败
     """
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
         # 过滤空行、注释、行内注释
         url_list = []
         for line in lines:
             line = line.strip()
-            if not line or line.startswith('#'):
+            if not line or line.startswith("#"):
                 continue
 
             # 处理行内注释
-            if '#' in line:
-                line = line.split('#', 1)[0].strip()
+            if "#" in line:
+                line = line.split("#", 1)[0].strip()
 
             if line:
                 url_list.append(line)
@@ -242,7 +245,7 @@ def process_urls(url_list: List[str], args: argparse.Namespace, token: Optional[
     from ..models.resource import ResourceRef
 
     results = []
-    errors = []
+    errors: list[dict[str, Any]] = []
 
     for url in url_list:
         try:
@@ -279,21 +282,19 @@ def process_urls(url_list: List[str], args: argparse.Namespace, token: Optional[
 
     # 汇总结果
     if errors and args.continue_on_error:
-        print("\n[SUMMARY] processed={}, succeeded={}, failed={}".format(
-            len(url_list),
-            len(results),
-            len(errors)
-        ), file=sys.stderr)
+        print(
+            "\n[SUMMARY] processed={}, succeeded={}, failed={}".format(
+                len(url_list), len(results), len(errors)
+            ),
+            file=sys.stderr,
+        )
 
         for error in errors:
-            print("[FAILED] {} → exit={}".format(
-                error["url"],
-                error["exit_code"]
-            ), file=sys.stderr)
+            print("[FAILED] {} → exit={}".format(error["url"], error["exit_code"]), file=sys.stderr)
 
         # 返回最严重的错误码
-        max_error = max(error["exit_code"] for error in errors)
-        return max_error
+        max_error = max(int(error["exit_code"]) for error in errors)
+        return int(max_error)  # 确保返回 int 类型
 
     return 0
 
@@ -313,7 +314,7 @@ def write_file(file_path: Path, content: str) -> None:
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # 写入文件
-        file_path.write_text(content, encoding='utf-8')
+        file_path.write_text(content, encoding="utf-8")
 
         print(f"[INFO] Written to {file_path}", file=sys.stderr)
 
